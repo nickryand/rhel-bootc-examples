@@ -17,23 +17,23 @@ keys_dir := justfile_directory() + "/target/keys"
 keygen:
     #!/bin/bash
     set -euo pipefail
-    python3 util/keys.py generate --output-dir "{{keys_dir}}"
+    python3 util/keys.py generate --output-dir "{{ keys_dir }}"
     mkdir -p keys/
-    cp "{{keys_dir}}/sb-db.crt" keys/db.crt
+    cp "{{ keys_dir }}/sb-db.crt" keys/db.crt
     echo "keys/db.crt updated — commit it to the repo"
 
 # Build the sealed host image (composefs backend with signed UKI).
 # If no persistent key exists under target/keys/, an ephemeral key+cert pair
 # is generated automatically (suitable for CI and local smoke-testing).
-build:
+build containerfile="Containerfile":
     #!/bin/bash
     set -euo pipefail
-    KEY="{{keys_dir}}/sb-db.key"
+    KEY="{{ keys_dir }}/sb-db.key"
     CERT="keys/db.crt"
 
     if [ ! -f "${KEY}" ]; then
         echo "No persistent key found — generating ephemeral key+cert for this build."
-        mkdir -p "{{keys_dir}}"
+        mkdir -p "{{ keys_dir }}"
         openssl req -x509 -newkey rsa:2048 -nodes \
             -keyout "${KEY}" -out "${CERT}" \
             -days 1 -subj '/CN=bootc-ci-ephemeral/'
@@ -45,12 +45,13 @@ build:
         --cap-add=all --security-opt=label=type:container_runtime_t --device /dev/fuse \
         --secret id=secureboot_key,src="${KEY}" \
         --secret id=secureboot_cert,src="${CERT}" \
-        -t "{{host_image}}" .
-    echo "Host image built: {{host_image}}"
+        --file "{{ containerfile }}" \
+        -t "{{ host_image }}" .
+    echo "Host image built: {{ host_image }}"
 
 # Internal: boot the VM (used by bcvk-ssh and bcvk-test).
 [private]
-bcvk-boot: build
+bcvk-boot containerfile="Containerfile": (build containerfile)
     #!/bin/bash
     set -euo pipefail
 
@@ -62,18 +63,18 @@ bcvk-boot: build
     set -x
     bcvk libvirt run  --name "${VM_NAME}" \
         --filesystem=ext4 \
-        --secure-boot-keys "{{keys_dir}}" \
-        "{{host_image}}"
+        --secure-boot-keys "{{ keys_dir }}" \
+        "{{ host_image }}"
 
 # Boot a VM and open an interactive SSH session.
-bcvk-ssh: bcvk-boot
+bcvk-ssh containerfile="Containerfile": (bcvk-boot containerfile)
     #!/bin/bash
     set -euo pipefail
     VM_NAME="sealed-demo"
     bcvk libvirt ssh "${VM_NAME}"
 
 # Boot a VM, verify composefs, and tear down.
-bcvk-test: bcvk-boot
+bcvk-test containerfile="Containerfile": (bcvk-boot containerfile)
     #!/bin/bash
     set -euo pipefail
 
@@ -109,5 +110,5 @@ clean:
     set -euo pipefail
     bcvk libvirt rm --stop --force sealed-demo 2>/dev/null || true
     rm -rf target/
-    podman rmi -f "{{host_image}}" 2>/dev/null || true
+    podman rmi -f "{{ host_image }}" 2>/dev/null || true
     echo "Cleaned"
